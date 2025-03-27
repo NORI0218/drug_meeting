@@ -215,6 +215,165 @@
             }
         }
 
+        // データ保存リクエストを管理するクラス（オンライン環境向け最適化）
+        const DataSaveManager = {
+            // バックグラウンドでの保存試行を追跡
+            pendingSaves: [],
+            isBackgroundSaving: false,
+            
+            // インターネット接続状態を監視
+            isOnline: navigator.onLine,
+            
+            // 初期化
+            init() {
+                // オンライン状態の監視
+                window.addEventListener('online', () => {
+                    console.log('インターネット接続が回復しました');
+                    this.isOnline = true;
+                    // 未保存データがあれば保存を試みる
+                    this.processPendingSaves();
+                });
+                
+                window.addEventListener('offline', () => {
+                    console.log('インターネット接続が切断されました');
+                    this.isOnline = false;
+                });
+                
+                // 画面を閉じる前に未保存のデータがある場合は警告
+                window.addEventListener('beforeunload', (event) => {
+                    if (this.pendingSaves.length > 0) {
+                        const message = '未保存のデータがあります。ページを離れますか？';
+                        event.returnValue = message;
+                        return message;
+                    }
+                });
+                
+                // 定期的に未保存データの保存を試みる
+                setInterval(() => this.processPendingSaves(), 30000);
+            },
+            
+            // 保存リクエストを追加
+            addSaveRequest(dataToSave) {
+                const id = Date.now();
+                this.pendingSaves.push({
+                    id,
+                    data: dataToSave,
+                    attemptCount: 0,
+                    lastAttempt: null
+                });
+                
+                // すぐに保存処理を開始
+                this.processPendingSaves();
+                return id;
+            },
+            
+            // 未保存データの処理
+            async processPendingSaves() {
+                if (!this.isOnline || this.isBackgroundSaving || this.pendingSaves.length === 0) {
+                    return;
+                }
+                
+                this.isBackgroundSaving = true;
+                
+                try {
+                    // コピーを作成して反復処理中に配列が変更されても問題ないようにする
+                    const currentSaves = [...this.pendingSaves];
+                    
+                    for (const saveRequest of currentSaves) {
+                        // 最後の試行から少なくとも5秒経過しているものだけ処理
+                        const now = Date.now();
+                        if (saveRequest.lastAttempt && (now - saveRequest.lastAttempt) < 5000) {
+                            continue;
+                        }
+                        
+                        // 最大10回まで試行
+                        if (saveRequest.attemptCount >= 10) {
+                            console.error(`保存リクエスト ${saveRequest.id} は最大試行回数に達しました。破棄します。`);
+                            this.pendingSaves = this.pendingSaves.filter(req => req.id !== saveRequest.id);
+                            continue;
+                        }
+                        
+                        saveRequest.attemptCount++;
+                        saveRequest.lastAttempt = now;
+                        
+                        const success = await this._executeSaveRequest(saveRequest.data);
+                        
+                        if (success) {
+                            console.log(`保存リクエスト ${saveRequest.id} が成功しました`);
+                            this.pendingSaves = this.pendingSaves.filter(req => req.id !== saveRequest.id);
+                        } else {
+                            console.warn(`保存リクエスト ${saveRequest.id} が失敗しました。後で再試行します。`);
+                        }
+                    }
+                } finally {
+                    this.isBackgroundSaving = false;
+                }
+            },
+            
+            // 実際の保存リクエストを実行
+            async _executeSaveRequest(dataToSave) {
+                try {
+                    // データサイズを確認
+                    const dataStr = JSON.stringify(dataToSave);
+                    const sizeInKB = (dataStr.length / 1024).toFixed(2);
+                    console.log(`保存データサイズ: ${sizeInKB}KB`);
+                    
+                    // GZIP圧縮の予測サイズ（おおよそ元のサイズの1/4）
+                    console.log(`予測圧縮後サイズ: ~${(dataStr.length / 4 / 1024).toFixed(2)}KB`);
+                    
+                    // サイズが大きすぎる場合は失敗
+                    if (dataStr.length > 8 * 1024 * 1024) { // 8MBを超える場合
+                        console.error('データサイズが大きすぎます:', sizeInKB + 'KB');
+                        return false;
+                    }
+                    
+                    const response = await fetch('/api/data', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Cache-Control': 'no-cache, no-store',
+                            'X-Client-Version': '1.0', // クライアントバージョン情報
+                            'X-Device-Type': this._getDeviceType() // デバイスタイプ情報
+                        },
+                        body: dataStr,
+                        // タイムアウトを設定
+                        signal: AbortSignal.timeout(15000), // 15秒でタイムアウト
+                        // キャッシュを無効化
+                        cache: 'no-store'
+                    });
+                    
+                    if (!response.ok) {
+                        let errorText;
+                        try {
+                            const errorData = await response.json();
+                            errorText = errorData.message || `HTTP ${response.status}`;
+                        } catch (e) {
+                            errorText = `HTTP ${response.status}`;
+                        }
+                        console.error('HTTP エラー:', errorText);
+                        return false;
+                    }
+                    
+                    const result = await response.json();
+                    return result.success === true;
+                } catch (error) {
+                    console.error('保存実行エラー:', error.name, error.message);
+                    return false;
+                }
+            },
+            
+            // デバイスタイプを取得（診断のため）
+            _getDeviceType() {
+                const ua = navigator.userAgent;
+                if (/mobile/i.test(ua)) return 'mobile';
+                if (/tablet|ipad/i.test(ua)) return 'tablet';
+                return 'desktop';
+            }
+        };
+        
+        // 初期化
+        DataSaveManager.init();
+        
         // サーバーにデータを保存する
         async function saveDataToServer() {
             try {
@@ -226,60 +385,128 @@
                     meetings = []; // 修正：配列に変更
                 }
                 
-                // 保存するデータの構造をログに出力
-                const dataToSave = {
-                    meetings: meetings,
-                    staffList: staffList,
-                    masterPassword: masterPassword || 'admin123'
-                };
-                console.log('送信データ構造:', JSON.stringify(dataToSave).substring(0, 200) + '...');
-                
-                // リトライメカニズムを実装
-                let retries = 3;
-                let lastError = null;
-                
-                while (retries > 0) {
-                    try {
-                        const response = await fetch('/api/data', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(dataToSave),
-                        });
-                        
-                        if (!response.ok) {
-                            const errorText = await response.text();
-                            console.error('HTTPエラー:', response.status, errorText);
-                            throw new Error(`HTTP ${response.status}: ${errorText}`);
-                        }
-                        
-                        const result = await response.json();
-                        
-                        if (!result.success) {
-                            console.error('サーバーエラー:', result.message);
-                            alert('サーバーエラー: ' + (result.message || 'データを保存できませんでした'));
-                            return false;
-                        }
-                        
-                        console.log('データ保存成功');
-                        return true;
-                    } catch (retryError) {
-                        lastError = retryError;
-                        retries--;
-                        console.log(`リトライ残り ${retries}回...`);
-                        // 少し待機してからリトライ
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
+                // staffListが配列であることを確認
+                if (!Array.isArray(staffList)) {
+                    console.error('staffList が配列ではありません:', typeof staffList);
+                    // デフォルト値を設定
+                    staffList = [
+                        '土谷順彦', '内藤　整', '西田隼人', '八木真由', '山岸敦史',
+                        '成澤貴史', '福原宏樹', '髙井優季', '末永信太', '伊藤　英',
+                        '深井惇史', '堀　聡美', '佐々木有貴'
+                    ];
                 }
                 
-                // すべてのリトライが失敗した場合
-                console.error('データ保存リトライ失敗:', lastError);
-                alert('サーバーへのデータ保存に失敗しました。ネットワーク接続を確認してください。');
-                return false;
+                try {
+                    // JSONで安全なデータ構造を確保（循環参照などがないか確認）
+                    const meetingsCopy = JSON.parse(JSON.stringify(meetings));
+                    const staffListCopy = JSON.parse(JSON.stringify(staffList));
+                    
+                    // 保存するデータの構造を準備
+                    const dataToSave = {
+                        meetings: meetingsCopy,
+                        staffList: staffListCopy,
+                        masterPassword: masterPassword || 'admin123',
+                        clientTimestamp: new Date().toISOString(), // クライアント側のタイムスタンプを追加
+                        version: '1.0' // データフォーマットのバージョン情報
+                    };
+                    
+                    // オンライン状態をチェック
+                    if (!navigator.onLine) {
+                        console.warn('オフライン状態です。データを後で保存します。');
+                        DataSaveManager.addSaveRequest(dataToSave);
+                        alert('現在オフラインです。インターネット接続が回復した時に自動的に保存されます。');
+                        return false;
+                    }
+                    
+                    // 直接保存処理を実行
+                    console.log('保存処理を開始します');
+                    
+                    // リトライメカニズムを実装
+                    let retries = 3;
+                    let lastError = null;
+                    
+                    while (retries > 0) {
+                        try {
+                            console.log(`POST リクエスト試行 ${4-retries}/3`);
+                            const response = await fetch('/api/data', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Cache-Control': 'no-cache, no-store',
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                },
+                                body: JSON.stringify(dataToSave),
+                                // タイムアウトを設定
+                                signal: AbortSignal.timeout(10000), // 10秒でタイムアウト
+                                cache: 'no-store' // キャッシュを無効化
+                            });
+                            
+                            if (!response.ok) {
+                                let errorText;
+                                try {
+                                    const errorData = await response.json();
+                                    errorText = errorData.message || `HTTP ${response.status}`;
+                                } catch (e) {
+                                    errorText = `HTTP ${response.status}`;
+                                }
+                                console.error('HTTPエラー:', errorText);
+                                throw new Error(errorText);
+                            }
+                            
+                            let result;
+                            try {
+                                result = await response.json();
+                            } catch (jsonError) {
+                                console.error('JSONパースエラー:', jsonError);
+                                throw new Error('サーバーからの応答を解析できませんでした');
+                            }
+                            
+                            if (!result.success) {
+                                console.error('サーバーエラー:', result.message);
+                                throw new Error(result.message || 'データを保存できませんでした');
+                            }
+                            
+                            console.log('データ保存成功:', result);
+                            return true;
+                        } catch (retryError) {
+                            lastError = retryError;
+                            retries--;
+                            console.log(`リトライ残り ${retries}回...`, retryError);
+                            
+                            // 少し待機してからリトライ
+                            if (retries > 0) {
+                                const waitTime = (4-retries) * 2000; // 2秒、4秒、...
+                                console.log(`${waitTime/1000}秒待機してリトライします...`);
+                                await new Promise(resolve => setTimeout(resolve, waitTime));
+                            }
+                        }
+                    }
+                    
+                    // すべてのリトライが失敗した場合、バックグラウンド保存に登録
+                    console.error('すべてのリトライが失敗しました:', lastError);
+                    DataSaveManager.addSaveRequest(dataToSave);
+                    
+                    // エラーの種類に応じてメッセージを変更
+                    let errorMessage = 'サーバーへの保存に失敗しましたが、バックグラウンドで再試行します。';
+                    if (lastError && lastError.message) {
+                        if (lastError.name === 'AbortError') {
+                            errorMessage += 'サーバーの応答がタイムアウトしました。';
+                        } else if (lastError.name === 'TypeError' && lastError.message.includes('fetch')) {
+                            errorMessage += 'ネットワーク接続を確認してください。';
+                        }
+                    }
+                    
+                    alert(errorMessage);
+                    return false;
+                    
+                } catch (jsonError) {
+                    console.error('データ構造エラー:', jsonError);
+                    alert('データ構造に問題があります。循環参照などがないか確認してください。');
+                    return false;
+                }
             } catch (error) {
-                console.error('データ保存エラー:', error);
-                alert('サーバーにデータを保存できませんでした。ネットワーク接続を確認してください。');
+                console.error('データ保存処理エラー:', error);
+                alert('予期しないエラーが発生しました: ' + error.message);
                 return false;
             }
         }
@@ -385,19 +612,60 @@
 
         // 説明会を作成する関数
         async function createMeeting() {
+            // ローディングインジケータ表示などのUIフィードバックを追加するとよいでしょう
+            
             try {
-                const title = document.getElementById('meeting-title').value;
+                const title = document.getElementById('meeting-title').value.trim();
                 const date = document.getElementById('meeting-date').value;
-                const location = document.getElementById('meeting-location').value;
-                const description = document.getElementById('meeting-description').value;
+                const location = document.getElementById('meeting-location').value.trim();
+                const description = document.getElementById('meeting-description').value.trim();
                 const deadline = document.getElementById('deadline').value;
-                const creatorName = document.getElementById('creator-name').value;
+                const creatorName = document.getElementById('creator-name').value.trim();
                 const password = document.getElementById('meeting-password').value;
                 
-                // 入力検証
-                if (!title || !date || !location || !deadline || !creatorName || !password) {
-                    alert('必須項目をすべて入力してください。');
+                // 入力検証 - より厳密に
+                if (!title) {
+                    alert('タイトルを入力してください。');
+                    document.getElementById('meeting-title').focus();
                     return;
+                }
+                
+                if (!date) {
+                    alert('日時を入力してください。');
+                    document.getElementById('meeting-date').focus();
+                    return;
+                }
+                
+                if (!location) {
+                    alert('場所を入力してください。');
+                    document.getElementById('meeting-location').focus();
+                    return;
+                }
+                
+                if (!deadline) {
+                    alert('参加登録締切日時を入力してください。');
+                    document.getElementById('deadline').focus();
+                    return;
+                }
+                
+                if (!creatorName) {
+                    alert('作成者名を入力してください。');
+                    document.getElementById('creator-name').focus();
+                    return;
+                }
+                
+                if (!password) {
+                    alert('管理用パスワードを入力してください。');
+                    document.getElementById('meeting-password').focus();
+                    return;
+                }
+                
+                // パスワード強度チェック
+                if (password.length < 4) {
+                    if (!confirm('パスワードが短すぎるため、セキュリティ上のリスクがあります。これでも続行しますか？')) {
+                        document.getElementById('meeting-password').focus();
+                        return;
+                    }
                 }
                 
                 // 日付検証
@@ -405,13 +673,44 @@
                 const deadlineObj = new Date(deadline);
                 const now = new Date();
                 
-                if (isNaN(dateObj.getTime()) || isNaN(deadlineObj.getTime())) {
-                    alert('有効な日時を入力してください。');
+                if (isNaN(dateObj.getTime())) {
+                    alert('有効な説明会日時を入力してください。');
+                    document.getElementById('meeting-date').focus();
                     return;
                 }
                 
+                if (isNaN(deadlineObj.getTime())) {
+                    alert('有効な締切日時を入力してください。');
+                    document.getElementById('deadline').focus();
+                    return;
+                }
+                
+                // 現在日時との比較
+                if (dateObj < now) {
+                    if (!confirm('説明会日時が過去の日時になっています。このまま続行しますか？')) {
+                        document.getElementById('meeting-date').focus();
+                        return;
+                    }
+                }
+                
+                // 締切日時のチェック - 締切は説明会の前である必要がある
                 if (deadlineObj > dateObj) {
                     alert('参加登録締切は説明会日時より前に設定してください。');
+                    document.getElementById('deadline').focus();
+                    return;
+                }
+                
+                // 過去の締切日時のチェック
+                if (deadlineObj < now) {
+                    if (!confirm('締切日時が過去の日時になっています。このまま続行しますか？')) {
+                        document.getElementById('deadline').focus();
+                        return;
+                    }
+                }
+                
+                // オンライン接続の確認
+                if (!navigator.onLine) {
+                    alert('現在オフラインです。インターネット接続を確認してから再度お試しください。');
                     return;
                 }
                 
@@ -424,6 +723,7 @@
                     meetings = [];
                 }
                 
+                // 新しい説明会オブジェクトの作成
                 const meeting = {
                     id: Date.now(), // ユニークID
                     title: title,
@@ -435,24 +735,59 @@
                     password: password, // パスワードを保存
                     eligibleStaff: selectedStaff, // 参加対象スタッフリスト
                     responses: [],
-                    fixed: false
+                    fixed: false,
+                    createdAt: new Date().toISOString(), // 作成日時を記録
+                    updatedAt: new Date().toISOString() // 更新日時を記録
                 };
                 
                 console.log('新しい説明会オブジェクト作成:', JSON.stringify(meeting).substring(0, 100) + '...');
+                
+                // 一時的なローカルストレージにバックアップ（ブラウザがクラッシュした場合のため）
+                try {
+                    const backupData = {
+                        meeting: meeting,
+                        timestamp: Date.now()
+                    };
+                    localStorage.setItem('meeting_draft_backup', JSON.stringify(backupData));
+                } catch (storageError) {
+                    console.warn('ローカルストレージへのバックアップに失敗しました:', storageError);
+                }
                 
                 // 保存の前に配列を確認
                 meetings.push(meeting);
                 console.log(`説明会を追加しました（現在 ${meetings.length} 件）`);
                 
-                // 複数回試行
+                // 厳密な保存処理
                 let saveSucceeded = false;
-                for (let attempt = 1; attempt <= 3 && !saveSucceeded; attempt++) {
-                    console.log(`保存試行 ${attempt}/3`);
-                    saveSucceeded = await saveDataToServer();
-                    if (!saveSucceeded && attempt < 3) {
-                        // 少し待ってから再試行
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                try {
+                    // 複数回試行
+                    for (let attempt = 1; attempt <= 3 && !saveSucceeded; attempt++) {
+                        console.log(`保存試行 ${attempt}/3`);
+                        
+                        // 進捗表示などのフィードバックをここで実装可能
+                        
+                        saveSucceeded = await saveDataToServer();
+                        
+                        // 保存成功時のローカルストレージクリア
+                        if (saveSucceeded) {
+                            try {
+                                localStorage.removeItem('meeting_draft_backup');
+                            } catch (e) {
+                                console.warn('ローカルストレージのクリアに失敗:', e);
+                            }
+                            break;
+                        }
+                        
+                        if (!saveSucceeded && attempt < 3) {
+                            // 少し待ってから再試行
+                            const waitTime = attempt * 1500; // 1.5秒、3秒、...
+                            console.log(`${waitTime/1000}秒待機してリトライします...`);
+                            await new Promise(resolve => setTimeout(resolve, waitTime));
+                        }
                     }
+                } catch (savingError) {
+                    console.error('保存プロセスエラー:', savingError);
+                    saveSucceeded = false;
                 }
                 
                 if (saveSucceeded) {
@@ -467,13 +802,66 @@
                     
                     alert('説明会が作成されました！');
                 } else {
-                    // 保存に失敗した場合、エラーを表示して一覧から削除
-                    alert('説明会データの保存に失敗しました。ネットワーク接続を確認し、再度お試しください。');
-                    meetings = meetings.filter(m => m.id !== meeting.id);
+                    // バックグラウンド保存に登録して、ユーザーには成功として表示
+                    // この方法はより良いユーザー体験を提供するが、データ一貫性のリスクもある
+                    const backupSavePromise = new Promise(resolve => {
+                        // バックグラウンド保存のデータを作成
+                        const dataToSave = {
+                            meetings: JSON.parse(JSON.stringify(meetings)),
+                            staffList: JSON.parse(JSON.stringify(staffList)),
+                            masterPassword: masterPassword,
+                            clientTimestamp: new Date().toISOString(),
+                            version: '1.0'
+                        };
+                        
+                        // バックグラウンド保存への登録
+                        DataSaveManager.addSaveRequest(dataToSave);
+                        
+                        // 一応すぐにも試行
+                        setTimeout(() => {
+                            DataSaveManager.processPendingSaves();
+                            resolve();
+                        }, 100);
+                    });
+                    
+                    // フォームをリセット
+                    document.getElementById('meeting-form').reset();
+                    
+                    // 一覧ページに切り替え
+                    document.querySelector('.nav-link[data-page="list-page"]').click();
+                    
+                    // 一覧を更新
+                    displayMeetings();
+                    
+                    // ユーザーに通知（バックグラウンド保存という旨を伝える）
+                    alert('説明会を作成しました。サーバーとの同期は自動的に行われます。');
+                    
+                    // バックグラウンド処理を続行
+                    backupSavePromise.catch(e => console.error('バックグラウンド保存エラー:', e));
                 }
             } catch (error) {
                 console.error('説明会作成エラー:', error);
-                alert('エラーが発生しました: ' + error.message);
+                
+                // 異常系のエラーハンドリング - より具体的なエラーメッセージ
+                let errorMessage = 'エラーが発生しました: ';
+                
+                if (error.name === 'TypeError' || error.name === 'ReferenceError') {
+                    errorMessage += 'プログラムエラーが発生しました。';
+                } else if (error.name === 'NetworkError' || error.message.includes('network')) {
+                    errorMessage += 'ネットワーク接続を確認してください。';
+                } else {
+                    errorMessage += error.message;
+                }
+                
+                alert(errorMessage);
+                
+                // 開発者コンソールへの詳細出力
+                console.error('詳細エラー情報:', {
+                    error: error,
+                    stack: error.stack,
+                    browser: navigator.userAgent,
+                    timestamp: new Date().toISOString()
+                });
             }
         }
 
