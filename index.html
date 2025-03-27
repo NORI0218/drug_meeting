@@ -163,14 +163,8 @@
     </div>
 
     <script>
-        // 固定スタッフリスト
-        const staffList = [
-            '土谷順彦', '内藤整', '西田隼人', '八木真由', '山岸敦史',
-            '成澤貴史', '福原宏樹', '髙井優季', '末永信太', '伊藤英',
-            '深井惇史', '堀聡美', '佐々木有貴'
-        ];
-
         // データ保存用のオブジェクト
+        let staffList = []; // サーバーから取得
         let meetings = [];
         let currentMeetingId = null;
         let isAuthenticated = false;
@@ -181,6 +175,20 @@
             try {
                 const response = await fetch('/api/data');
                 const data = await response.json();
+                
+                // スタッフリストを取得
+                if (Array.isArray(data.staffList) && data.staffList.length > 0) {
+                    staffList = data.staffList;
+                    console.log('スタッフリストを取得しました:', staffList.length + '名');
+                } else {
+                    console.warn('サーバーからスタッフリストを取得できませんでした。デフォルト値を使用します。');
+                    staffList = [
+                        '土谷順彦', '内藤整', '西田隼人', '八木真由', '山岸敦史',
+                        '成澤貴史', '福原宏樹', '髙井優季', '末永信太', '伊藤英',
+                        '深井惇史', '堀聡美', '佐々木有貴'
+                    ];
+                }
+                
                 meetings = data.meetings || [];
                 masterPassword = data.masterPassword || 'admin123';
                 
@@ -211,27 +219,64 @@
         async function saveDataToServer() {
             try {
                 console.log('データ保存リクエスト開始');
-                const response = await fetch('/api/data', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        meetings: meetings,
-                        masterPassword: masterPassword
-                    }),
-                });
                 
-                const result = await response.json();
-                
-                if (!result.success) {
-                    console.error('サーバーエラー:', result.message);
-                    alert('サーバーエラー: ' + (result.message || 'データを保存できませんでした'));
-                    return false;
+                // データ構造を確認
+                if (!Array.isArray(meetings)) {
+                    console.error('meetings が配列ではありません:', typeof meetings);
+                    meetings = []; // 修正：配列に変更
                 }
                 
-                console.log('データ保存成功');
-                return true;
+                // 保存するデータの構造をログに出力
+                const dataToSave = {
+                    meetings: meetings,
+                    staffList: staffList,
+                    masterPassword: masterPassword || 'admin123'
+                };
+                console.log('送信データ構造:', JSON.stringify(dataToSave).substring(0, 200) + '...');
+                
+                // リトライメカニズムを実装
+                let retries = 3;
+                let lastError = null;
+                
+                while (retries > 0) {
+                    try {
+                        const response = await fetch('/api/data', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(dataToSave),
+                        });
+                        
+                        if (!response.ok) {
+                            const errorText = await response.text();
+                            console.error('HTTPエラー:', response.status, errorText);
+                            throw new Error(`HTTP ${response.status}: ${errorText}`);
+                        }
+                        
+                        const result = await response.json();
+                        
+                        if (!result.success) {
+                            console.error('サーバーエラー:', result.message);
+                            alert('サーバーエラー: ' + (result.message || 'データを保存できませんでした'));
+                            return false;
+                        }
+                        
+                        console.log('データ保存成功');
+                        return true;
+                    } catch (retryError) {
+                        lastError = retryError;
+                        retries--;
+                        console.log(`リトライ残り ${retries}回...`);
+                        // 少し待機してからリトライ
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+                
+                // すべてのリトライが失敗した場合
+                console.error('データ保存リトライ失敗:', lastError);
+                alert('サーバーへのデータ保存に失敗しました。ネットワーク接続を確認してください。');
+                return false;
             } catch (error) {
                 console.error('データ保存エラー:', error);
                 alert('サーバーにデータを保存できませんでした。ネットワーク接続を確認してください。');
@@ -340,43 +385,95 @@
 
         // 説明会を作成する関数
         async function createMeeting() {
-            const title = document.getElementById('meeting-title').value;
-            const date = document.getElementById('meeting-date').value;
-            const location = document.getElementById('meeting-location').value;
-            const description = document.getElementById('meeting-description').value;
-            const deadline = document.getElementById('deadline').value;
-            const creatorName = document.getElementById('creator-name').value;
-            const password = document.getElementById('meeting-password').value;
-            
-            // すべてのスタッフを対象とする
-            const selectedStaff = [...staffList];
-            
-            const meeting = {
-                id: Date.now(), // ユニークID
-                title: title,
-                date: date,
-                location: location,
-                description: description,
-                deadline: deadline,
-                creator: creatorName,
-                password: password, // パスワードを保存
-                eligibleStaff: selectedStaff, // 参加対象スタッフリスト
-                responses: [],
-                fixed: false
-            };
-            
-            meetings.push(meeting);
-            if (await saveDataToServer()) {
-                // フォームをリセット
-                document.getElementById('meeting-form').reset();
+            try {
+                const title = document.getElementById('meeting-title').value;
+                const date = document.getElementById('meeting-date').value;
+                const location = document.getElementById('meeting-location').value;
+                const description = document.getElementById('meeting-description').value;
+                const deadline = document.getElementById('deadline').value;
+                const creatorName = document.getElementById('creator-name').value;
+                const password = document.getElementById('meeting-password').value;
                 
-                // 一覧ページに切り替え
-                document.querySelector('.nav-link[data-page="list-page"]').click();
+                // 入力検証
+                if (!title || !date || !location || !deadline || !creatorName || !password) {
+                    alert('必須項目をすべて入力してください。');
+                    return;
+                }
                 
-                // 一覧を更新
-                displayMeetings();
+                // 日付検証
+                const dateObj = new Date(date);
+                const deadlineObj = new Date(deadline);
+                const now = new Date();
                 
-                alert('説明会が作成されました！');
+                if (isNaN(dateObj.getTime()) || isNaN(deadlineObj.getTime())) {
+                    alert('有効な日時を入力してください。');
+                    return;
+                }
+                
+                if (deadlineObj > dateObj) {
+                    alert('参加登録締切は説明会日時より前に設定してください。');
+                    return;
+                }
+                
+                // すべてのスタッフを対象とする
+                const selectedStaff = [...staffList];
+                
+                // meetings が配列でない場合に初期化
+                if (!Array.isArray(meetings)) {
+                    console.warn('meetings が配列ではありません。初期化します。');
+                    meetings = [];
+                }
+                
+                const meeting = {
+                    id: Date.now(), // ユニークID
+                    title: title,
+                    date: date,
+                    location: location,
+                    description: description,
+                    deadline: deadline,
+                    creator: creatorName,
+                    password: password, // パスワードを保存
+                    eligibleStaff: selectedStaff, // 参加対象スタッフリスト
+                    responses: [],
+                    fixed: false
+                };
+                
+                console.log('新しい説明会オブジェクト作成:', JSON.stringify(meeting).substring(0, 100) + '...');
+                
+                // 保存の前に配列を確認
+                meetings.push(meeting);
+                console.log(`説明会を追加しました（現在 ${meetings.length} 件）`);
+                
+                // 複数回試行
+                let saveSucceeded = false;
+                for (let attempt = 1; attempt <= 3 && !saveSucceeded; attempt++) {
+                    console.log(`保存試行 ${attempt}/3`);
+                    saveSucceeded = await saveDataToServer();
+                    if (!saveSucceeded && attempt < 3) {
+                        // 少し待ってから再試行
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+                
+                if (saveSucceeded) {
+                    // フォームをリセット
+                    document.getElementById('meeting-form').reset();
+                    
+                    // 一覧ページに切り替え
+                    document.querySelector('.nav-link[data-page="list-page"]').click();
+                    
+                    // 一覧を更新
+                    displayMeetings();
+                    
+                    alert('説明会が作成されました！');
+                } else {
+                    // 保存に失敗した場合、エラーを表示して一覧から削除
+                    alert('説明会データの保存に失敗しました。ネットワーク接続を確認し、再度お試しください。');
+                    meetings = meetings.filter(m => m.id !== meeting.id);
+                }
+            } catch (error) {
+                console.error('説明会作成エラー:', error);
+                alert('エラーが発生しました: ' + error.message);
             }
         }
 
