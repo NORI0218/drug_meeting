@@ -176,20 +176,44 @@
                 const response = await fetch('/api/data');
                 const data = await response.json();
                 
-                // スタッフリストを取得
+                // スタッフリストを取得し、名前の正規化を行う（全角スペースを削除）
                 if (Array.isArray(data.staffList) && data.staffList.length > 0) {
-                    staffList = data.staffList;
+                    // 名前の正規化（全角スペースを削除）
+                    staffList = data.staffList.map(name => name.replace(/　/g, ''));
                     console.log('スタッフリストを取得しました:', staffList.length + '名');
                 } else {
                     console.warn('サーバーからスタッフリストを取得できませんでした。デフォルト値を使用します。');
                     staffList = [
-                        '土谷順彦', '内藤　整', '西田隼人', '八木真由', '山岸敦史',
-                        '成澤貴史', '福原宏樹', '髙井優季', '末永信太', '伊藤　英',
-                        '深井惇史', '堀　聡美', '佐々木有貴'
+                        '土谷順彦', '内藤整', '西田隼人', '八木真由', '山岸敦史',
+                        '成澤貴史', '福原宏樹', '髙井優季', '末永信太', '伊藤英',
+                        '深井惇史', '堀聡美', '佐々木有貴'
                     ];
                 }
                 
-                meetings = data.meetings || [];
+                // 会議データを取得して名前の正規化
+                if (Array.isArray(data.meetings)) {
+                    meetings = data.meetings.map(meeting => {
+                        // 対象スタッフリストの正規化
+                        const normalizedEligibleStaff = meeting.eligibleStaff.map(staff => staff.replace(/　/g, ''));
+                        
+                        // 回答リストの正規化
+                        const normalizedResponses = meeting.responses.map(response => {
+                            return {
+                                ...response,
+                                name: response.name.replace(/　/g, '') // スタッフ名を正規化
+                            };
+                        });
+                        
+                        return {
+                            ...meeting,
+                            eligibleStaff: normalizedEligibleStaff,
+                            responses: normalizedResponses
+                        };
+                    });
+                } else {
+                    meetings = [];
+                }
+                
                 masterPassword = data.masterPassword || 'admin123';
                 
                 // 締め切り日時から1か月を過ぎた説明会を削除
@@ -397,9 +421,36 @@
                 }
                 
                 try {
+                    // データの正規化: 名前の空白を統一
+                    // data.jsonファイルの「内藤　整」と「内藤整」のようなスタッフ名の違いを解消
+                    let normalizedMeetings = meetings.map(meeting => {
+                        // 説明会の対象スタッフリストを正規化
+                        const normalizedEligibleStaff = meeting.eligibleStaff.map(staff => {
+                            // 全角スペースを削除
+                            return staff.replace(/　/g, '');
+                        });
+                        
+                        // 回答リストを正規化
+                        const normalizedResponses = meeting.responses.map(response => {
+                            return {
+                                ...response,
+                                name: response.name.replace(/　/g, '') // スタッフ名を正規化
+                            };
+                        });
+                        
+                        return {
+                            ...meeting,
+                            eligibleStaff: normalizedEligibleStaff,
+                            responses: normalizedResponses
+                        };
+                    });
+                    
+                    // スタッフリストも正規化
+                    let normalizedStaffList = staffList.map(staff => staff.replace(/　/g, ''));
+                    
                     // JSONで安全なデータ構造を確保（循環参照などがないか確認）
-                    const meetingsCopy = JSON.parse(JSON.stringify(meetings));
-                    const staffListCopy = JSON.parse(JSON.stringify(staffList));
+                    const meetingsCopy = JSON.parse(JSON.stringify(normalizedMeetings));
+                    const staffListCopy = JSON.parse(JSON.stringify(normalizedStaffList));
                     
                     // 保存するデータの構造を準備
                     const dataToSave = {

@@ -211,16 +211,31 @@ function saveData(data) {
       // 方法3: fsモジュールのwriteFile（非同期APIを同期的に使用）
       if (!saveSuccessful) {
         try {
-          const writeFilePromise = new Promise((resolve, reject) => {
-            fs.writeFile(DATA_FILE, jsonData, 'utf8', (err) => {
-              if (err) reject(err);
-              else resolve();
+          // まずsyncを試す
+          try {
+            fs.writeFileSync(DATA_FILE, jsonData, 'utf8');
+            console.log('fs.writeFileSync による書き込み成功');
+            saveSuccessful = true;
+          } catch (syncWriteErr) {
+            console.error('fs.writeFileSync エラー:', syncWriteErr.message);
+            
+            // 非同期処理も試す
+            const writeFilePromise = new Promise((resolve, reject) => {
+              fs.writeFile(DATA_FILE, jsonData, 'utf8', (err) => {
+                if (err) reject(err);
+                else {
+                  console.log('fs.writeFile による書き込み成功');
+                  saveSuccessful = true;
+                  resolve();
+                }
+              });
             });
-          });
-          // 同期的に結果を待つ
-          Promise.resolve(writeFilePromise);
-          console.log('fs.writeFile による書き込み成功');
-          saveSuccessful = true;
+            
+            // 同期的に結果を待つことはせず、非同期処理として実行
+            writeFilePromise.catch(err => {
+              console.error('非同期書き込みエラー:', err.message);
+            });
+          }
         } catch (writeFileErr) {
           console.error('fs.writeFile による書き込みエラー:', writeFileErr.message);
         }
