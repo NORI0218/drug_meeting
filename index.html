@@ -210,6 +210,7 @@
         // サーバーにデータを保存する
         async function saveDataToServer() {
             try {
+                console.log('データ保存リクエスト開始');
                 const response = await fetch('/api/data', {
                     method: 'POST',
                     headers: {
@@ -220,11 +221,20 @@
                         masterPassword: masterPassword
                     }),
                 });
+                
                 const result = await response.json();
-                return result.success;
+                
+                if (!result.success) {
+                    console.error('サーバーエラー:', result.message);
+                    alert('サーバーエラー: ' + (result.message || 'データを保存できませんでした'));
+                    return false;
+                }
+                
+                console.log('データ保存成功');
+                return true;
             } catch (error) {
                 console.error('データ保存エラー:', error);
-                alert('サーバーにデータを保存できませんでした。');
+                alert('サーバーにデータを保存できませんでした。ネットワーク接続を確認してください。');
                 return false;
             }
         }
@@ -278,25 +288,8 @@
                 authenticateForResponses();
             });
             
-            // 設定リンクのクリックイベント
-            document.getElementById('config-link').addEventListener('click', function(e) {
-                e.preventDefault();
-                document.getElementById('config-modal').style.display = 'block';
-                document.getElementById('master-password').value = masterPassword;
-            });
-            
-            // 設定フォームの送信処理
-            document.getElementById('config-form').addEventListener('submit', async function(e) {
-                e.preventDefault();
-                const newMasterPassword = document.getElementById('master-password').value;
-                if (newMasterPassword.trim() !== '') {
-                    masterPassword = newMasterPassword;
-                    if (await saveDataToServer()) {
-                        alert('マスターパスワードが保存されました。');
-                        document.getElementById('config-modal').style.display = 'none';
-                    }
-                }
-            });
+            // 設定リンクを非表示に
+            document.getElementById('config-link').style.display = 'none';
             
             // マスターパスワードでログインボタン処理
             document.getElementById('master-login-btn').addEventListener('click', function() {
