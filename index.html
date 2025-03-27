@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>薬剤説明会登録システム（山形大学医学部泌尿器科）</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>薬剤説明会登録システム</h1>
+            <h2>ー山形大学医学部泌尿器科ー</h2>
+            <a href="#" class="config-link" id="config-link">設定</a>
+        </div>
+    </header>
+    
+    <nav>
+        <div class="container">
+            <ul>
+                <li><a href="#" class="nav-link active" data-page="list-page">説明会一覧</a></li>
+                <li><a href="#" class="nav-link" data-page="create-page">新規説明会作成</a></li>
+            </ul>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <!-- 説明会一覧ページ -->
+        <div id="list-page" class="page active">
+            <section id="meeting-list">
+                <h2>説明会一覧</h2>
+                <div id="meetings-container">
+                    <p>現在、予定されている説明会はありません。</p>
+                </div>
+            </section>
+            
+            <section id="response-section" class="hidden">
+                <h2>参加登録</h2>
+                <div id="meeting-details"></div>
+                
+                <form id="response-form">
+                    <label for="staff-name">名前:</label>
+                    <select id="staff-name" required>
+                        <option value="">--- 選択してください ---</option>
+                        <!-- スタッフの選択肢はJavaScriptで動的に生成 -->
+                    </select>
+                    
+                    <div class="radio-group">
+                        <label>
+                            <input type="radio" name="attendance" value="attending" required>
+                            参加
+                        </label>
+                        <label>
+                            <input type="radio" name="attendance" value="not-attending">
+                            不参加
+                        </label>
+                    </div>
+                    
+                    <label for="comment">コメント:</label>
+                    <textarea id="comment" rows="2"></textarea>
+                    
+                    <button type="submit">登録</button>
+                </form>
+                
+                <div id="responses-list" class="hidden">
+                    <h3>回答一覧</h3>
+                    <form id="login-form" class="hidden">
+                        <label for="login-password">管理用パスワード:</label>
+                        <input type="password" id="login-password" required>
+                        <button type="submit">ログイン</button>
+                        <button type="button" id="master-login-btn" class="admin-button">管理者ログイン</button>
+                    </form>
+                    <div id="attendees-container"></div>
+                </div>
+            </section>
+        </div>
+        
+        <!-- 説明会作成ページ -->
+        <div id="create-page" class="page">
+            <section id="create-meeting">
+                <h2>説明会の予定を入力</h2>
+                <form id="meeting-form">
+                    <label for="meeting-title">タイトル:</label>
+                    <input type="text" id="meeting-title" required>
+                    
+                    <label for="meeting-date">日時:</label>
+                    <input type="datetime-local" id="meeting-date" required>
+                    
+                    <label for="meeting-location">場所:</label>
+                    <input type="text" id="meeting-location" required>
+                    
+                    <label for="meeting-description">詳細:</label>
+                    <textarea id="meeting-description" rows="4"></textarea>
+                    
+                    <label for="deadline">参加登録締切日時:</label>
+                    <input type="datetime-local" id="deadline" required>
+
+                    <label for="creator-name">作成者名:</label>
+                    <input type="text" id="creator-name" required>
+                    
+                    <label for="meeting-password">管理用パスワード:</label>
+                    <input type="password" id="meeting-password" required>
+                    
+                    <button type="submit">説明会を作成</button>
+                </form>
+            </section>
+        </div>
+    </div>
+
+    <!-- 設定モーダル -->
+    <div id="config-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>システム設定</h3>
+            <form id="config-form">
+                <label for="master-password">マスターパスワード:</label>
+                <input type="password" id="master-password" required>
+                <p>※このパスワードでは全ての説明会の回答を閲覧できます</p>
+                <button type="submit">保存</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- マスターパスワード入力モーダル -->
+    <div id="master-login-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>管理者ログイン</h3>
+            <form id="master-password-form">
+                <label for="entered-master-password">マスターパスワード:</label>
+                <input type="password" id="entered-master-password" required>
+                <button type="submit">ログイン</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 回答編集モーダル -->
+    <div id="edit-response-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>回答の編集</h3>
+            <form id="edit-response-form">
+                <input type="hidden" id="edit-staff-name">
+                
+                <label>参加状況:</label>
+                <div class="radio-group">
+                    <label>
+                        <input type="radio" name="edit-attendance" value="attending" required>
+                        参加
+                    </label>
+                    <label>
+                        <input type="radio" name="edit-attendance" value="not-attending">
+                        不参加
+                    </label>
+                </div>
+                
+                <label for="edit-comment">コメント:</label>
+                <textarea id="edit-comment" rows="2"></textarea>
+                
+                <button type="submit">更新</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 固定スタッフリスト
+        const staffList = [
+            '土谷順彦', '内藤整', '西田隼人', '八木真由', '山岸敦史',
+            '成澤貴史', '福原宏樹', '髙井優季', '末永信太', '伊藤英',
+            '深井惇史', '堀聡美', '佐々木有貴'
+        ];
+
+        // データ保存用のオブジェクト
+        let meetings = [];
+        let currentMeetingId = null;
+        let isAuthenticated = false;
+        let masterPassword = 'admin123'; // デフォルト値
+
+        // サーバーからデータを取得する
+        async function fetchDataFromServer() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                meetings = data.meetings || [];
+                masterPassword = data.masterPassword || 'admin123';
+                
+                // 締め切り日時から1か月を過ぎた説明会を削除
+                const now = new Date();
+                const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+                const filteredMeetings = meetings.filter(meeting => {
+                    const deadlineDate = new Date(meeting.deadline);
+                    return deadlineDate > oneMonthAgo;
+                });
+                
+                // 削除された説明会があれば保存
+                if (filteredMeetings.length < meetings.length) {
+                    meetings = filteredMeetings;
+                    await saveDataToServer();
+                    console.log(`${meetings.length - filteredMeetings.length}件の古い説明会が削除されました`);
+                }
+                
+                return true;
+            } catch (error) {
+                console.error('データ取得エラー:', error);
+                alert('サーバーからデータを取得できませんでした。');
+                return false;
+            }
+        }
+
+        // サーバーにデータを保存する
+        async function saveDataToServer() {
+            try {
+                const response = await fetch('/api/data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        meetings: meetings,
+                        masterPassword: masterPassword
+                    }),
+                });
+                const result = await response.json();
+                return result.success;
+            } catch (error) {
+                console.error('データ保存エラー:', error);
+                alert('サーバーにデータを保存できませんでした。');
+                return false;
+            }
+        }
+
+        // ページ読み込み時の処理
+        document.addEventListener('DOMContentLoaded', async function() {
+            // サーバーからデータを取得
+            await fetchDataFromServer();
+            
+            // ナビゲーションの処理
+            const navLinks = document.querySelectorAll('.nav-link');
+            navLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const targetPageId = this.getAttribute('data-page');
+                    
+                    // アクティブクラスの切り替え
+                    navLinks.forEach(l => l.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    // ページの表示切り替え
+                    document.querySelectorAll('.page').forEach(page => {
+                        page.classList.remove('active');
+                    });
+                    document.getElementById(targetPageId).classList.add('active');
+                    
+                    // 説明会詳細が開いている場合は閉じる
+                    if (targetPageId === 'list-page') {
+                        document.getElementById('response-section').classList.add('hidden');
+                    }
+                });
+            });
+
+            displayMeetings();
+            
+            // 説明会作成フォームの送信処理
+            document.getElementById('meeting-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                createMeeting();
+            });
+            
+            // 参加登録フォームの送信処理
+            document.getElementById('response-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                submitResponse();
+            });
+
+            // 管理用ログインフォームの送信処理
+            document.getElementById('login-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                authenticateForResponses();
+            });
+            
+            // 設定リンクのクリックイベント
+            document.getElementById('config-link').addEventListener('click', function(e) {
+                e.preventDefault();
+                document.getElementById('config-modal').style.display = 'block';
+                document.getElementById('master-password').value = masterPassword;
+            });
+            
+            // 設定フォームの送信処理
+            document.getElementById('config-form').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const newMasterPassword = document.getElementById('master-password').value;
+                if (newMasterPassword.trim() !== '') {
+                    masterPassword = newMasterPassword;
+                    if (await saveDataToServer()) {
+                        alert('マスターパスワードが保存されました。');
+                        document.getElementById('config-modal').style.display = 'none';
+                    }
+                }
+            });
+            
+            // マスターパスワードでログインボタン処理
+            document.getElementById('master-login-btn').addEventListener('click', function() {
+                document.getElementById('master-login-modal').style.display = 'block';
+            });
+            
+            // マスターパスワードフォームの送信処理
+            document.getElementById('master-password-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const enteredPassword = document.getElementById('entered-master-password').value;
+                
+                if (enteredPassword === masterPassword) {
+                    isAuthenticated = true;
+                    document.getElementById('login-form').classList.add('hidden');
+                    document.getElementById('master-login-modal').style.display = 'none';
+                    
+                    const meeting = meetings.find(m => m.id === currentMeetingId);
+                    if (meeting) {
+                        displayResponses(meeting);
+                    }
+                    
+                    alert('管理者認証に成功しました。');
+                } else {
+                    alert('マスターパスワードが正しくありません。');
+                }
+            });
+            
+            // 回答編集フォームの送信処理
+            document.getElementById('edit-response-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                updateResponse();
+            });
+            
+            // モーダルの閉じるボタン処理
+            document.querySelectorAll('.close').forEach(closeBtn => {
+                closeBtn.addEventListener('click', function() {
+                    this.parentElement.parentElement.style.display = 'none';
+                });
+            });
+            
+            // モーダル以外のクリックでモーダルを閉じる
+            window.addEventListener('click', function(e) {
+                if (e.target.className === 'modal') {
+                    e.target.style.display = 'none';
+                }
+            });
+        });
+
+        // 説明会を作成する関数
+        async function createMeeting() {
+            const title = document.getElementById('meeting-title').value;
+            const date = document.getElementById('meeting-date').value;
+            const location = document.getElementById('meeting-location').value;
+            const description = document.getElementById('meeting-description').value;
+            const deadline = document.getElementById('deadline').value;
+            const creatorName = document.getElementById('creator-name').value;
+            const password = document.getElementById('meeting-password').value;
+            
+            // すべてのスタッフを対象とする
+            const selectedStaff = [...staffList];
+            
+            const meeting = {
+                id: Date.now(), // ユニークID
+                title: title,
+                date: date,
+                location: location,
+                description: description,
+                deadline: deadline,
+                creator: creatorName,
+                password: password, // パスワードを保存
+                eligibleStaff: selectedStaff, // 参加対象スタッフリスト
+                responses: [],
+                fixed: false
+            };
+            
+            meetings.push(meeting);
+            if (await saveDataToServer()) {
+                // フォームをリセット
+                document.getElementById('meeting-form').reset();
+                
+                // 一覧ページに切り替え
+                document.querySelector('.nav-link[data-page="list-page"]').click();
+                
+                // 一覧を更新
+                displayMeetings();
+                
+                alert('説明会が作成されました！');
+            }
+        }
+
+        // 説明会一覧を表示する関数
+        function displayMeetings() {
+            const container = document.getElementById('meetings-container');
+            
+            if (meetings.length === 0) {
+                container.innerHTML = '<p>現在、予定されている説明会はありません。</p>';
+                return;
+            }
+            
+            let html = '<table>';
+            html += '<tr><th>タイトル</th><th>日時</th><th>場所</th><th>締切</th><th>状態</th><th>操作</th></tr>';
+            
+            meetings.forEach(meeting => {
+                const now = new Date();
+                const deadlineDate = new Date(meeting.deadline);
+                const isDeadlinePassed = now > deadlineDate;
+                
+                html += `<tr>
+                    <td>${meeting.title}</td>
+                    <td>${formatDateTime(meeting.date)}</td>
+                    <td>${meeting.location}</td>
+                    <td>${formatDateTime(meeting.deadline)}${isDeadlinePassed ? ' <span class="deadline-passed">(締切済)</span>' : ''}</td>
+                    <td>${meeting.fixed ? '確定' : '募集中'}</td>
+                    <td>
+                        <button onclick="viewMeeting(${meeting.id})">詳細</button>
+                        ${meeting.fixed || isDeadlinePassed ? 
+                            `<button onclick="showFixMeetingPrompt(${meeting.id})" ${meeting.fixed ? 'disabled' : ''}>確定</button>` : 
+                            ''}
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</table>';
+            container.innerHTML = html;
+        }
+
+        // 説明会の詳細を表示する関数
+        function viewMeeting(id) {
+            const meeting = meetings.find(m => m.id === id);
+            if (!meeting) return;
+            
+            currentMeetingId = id;
+            isAuthenticated = false; // 認証状態をリセット
+            
+            const section = document.getElementById('response-section');
+            section.classList.remove('hidden');
+            
+            const details = document.getElementById('meeting-details');
+            const now = new Date();
+            const deadlineDate = new Date(meeting.deadline);
+            const isDeadlinePassed = now > deadlineDate;
+            
+            details.innerHTML = `
+                <h3>${meeting.title}</h3>
+                <p><strong>日時:</strong> ${formatDateTime(meeting.date)}</p>
+                <p><strong>場所:</strong> ${meeting.location}</p>
+                <p><strong>詳細:</strong> ${meeting.description}</p>
+                <p><strong>作成者:</strong> ${meeting.creator}</p>
+                <p><strong>参加登録締切:</strong> ${formatDateTime(meeting.deadline)}
+                    ${isDeadlinePassed ? ' <span class="deadline-passed">(締切済)</span>' : ''}</p>
+                <p><strong>状態:</strong> ${meeting.fixed ? '確定' : '募集中'}</p>
+            `;
+            
+            // 回答フォームの表示切替
+            const responseForm = document.getElementById('response-form');
+            responseForm.style.display = meeting.fixed || isDeadlinePassed ? 'none' : 'block';
+            
+            // 対象スタッフのドロップダウンを更新
+            updateStaffDropdown(meeting);
+            
+            // 回答一覧セクションを表示
+            const responsesSection = document.getElementById('responses-list');
+            responsesSection.classList.remove('hidden');
+            
+            // ログインフォームを表示
+            const loginForm = document.getElementById('login-form');
+            loginForm.classList.remove('hidden');
+            
+            // 回答一覧は認証後に表示
+            document.getElementById('attendees-container').innerHTML = '<p>回答を表示するには管理用パスワードを入力してください。</p>';
+            
+            // ページ内スクロール
+            section.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // スタッフドロップダウンを更新する関数
+        function updateStaffDropdown(meeting) {
+            const select = document.getElementById('staff-name');
+            select.innerHTML = '<option value="">--- 選択してください ---</option>';
+            
+            meeting.eligibleStaff.forEach(staff => {
+                // 以前は回答済みのスタッフを非表示にしていたが、修正できるようにすべて表示
+                const hasResponded = meeting.responses.some(r => r.name === staff);
+                select.innerHTML += `<option value="${staff}">${staff}${hasResponded ? ' (回答済)' : ''}</option>`;
+            });
+        }
+
+        // 管理用パスワード認証
+        function authenticateForResponses() {
+            const meeting = meetings.find(m => m.id === currentMeetingId);
+            if (!meeting) return;
+            
+            const password = document.getElementById('login-password').value;
+            
+            if (password === meeting.password) {
+                isAuthenticated = true;
+                document.getElementById('login-form').classList.add('hidden');
+                displayResponses(meeting);
+                alert('認証に成功しました。回答一覧を表示します。');
+            } else {
+                alert('パスワードが正しくありません。');
+            }
+        }
+
+        // 参加登録回答を送信する関数
+        async function submitResponse() {
+            const meeting = meetings.find(m => m.id === currentMeetingId);
+            if (!meeting) return;
+            
+            const name = document.getElementById('staff-name').value;
+            const attendance = document.querySelector('input[name="attendance"]:checked').value;
+            const comment = document.getElementById('comment').value;
+            
+            if (!name) {
+                alert('名前を選択してください。');
+                return;
+            }
+            
+            // 既存の回答を確認
+            const existingResponseIndex = meeting.responses.findIndex(r => r.name === name);
+            
+            const response = {
+                name: name,
+                attendance: attendance,
+                comment: comment,
+                timestamp: new Date().toISOString()
+            };
+            
+            if (existingResponseIndex >= 0) {
+                // 既存の回答を更新
+                meeting.responses[existingResponseIndex] = response;
+                if (await saveDataToServer()) {
+                    alert('回答が更新されました！');
+                }
+            } else {
+                // 新しい回答を追加
+                meeting.responses.push(response);
+                if (await saveDataToServer()) {
+                    alert('参加登録が完了しました！');
+                }
+            }
+            
+            // ドロップダウンを更新
+            updateStaffDropdown(meeting);
+            
+            // 認証済みであれば回答一覧を更新
+            if (isAuthenticated) {
+                displayResponses(meeting);
+            }
+            
+            // フォームをリセット
+            document.getElementById('response-form').reset();
+        }
+
+        // 回答一覧を表示する関数
+        function displayResponses(meeting) {
+            if (!isAuthenticated) return;
+            
+            const container = document.getElementById('attendees-container');
+            
+            if (meeting.responses.length === 0) {
+                container.innerHTML = '<p>まだ回答はありません。</p>';
+                return;
+            }
+            
+            // 締切前か確定前の説明会かチェック
+            const now = new Date();
+            const deadlineDate = new Date(meeting.deadline);
+            const canEdit = !meeting.fixed && now <= deadlineDate;
+            
+            let html = '<table>';
+            html += '<tr><th>名前</th><th>参加</th><th>コメント</th><th>回答日時</th>';
+            
+            if (canEdit) {
+                html += '<th>操作</th>';
+            }
+            
+            html += '</tr>';
+            
+            meeting.responses.forEach(response => {
+                const statusClass = response.attendance === 'attending' ? 'status-attending' : 'status-not-attending';
+                const statusText = response.attendance === 'attending' ? '参加' : '不参加';
+                
+                html += `<tr>
+                    <td>${response.name}</td>
+                    <td><span class="status ${statusClass}">${statusText}</span></td>
+                    <td>${response.comment || '-'}</td>
+                    <td>${formatDateTime(response.timestamp)}</td>`;
+                
+                if (canEdit) {
+                    html += `<td><button onclick="showEditResponseForm('${response.name}')" class="edit-btn">編集</button></td>`;
+                }
+                
+                html += `</tr>`;
+            });
+            
+            html += '</table>';
+            
+            // 集計情報を追加
+            const attendingCount = meeting.responses.filter(r => r.attendance === 'attending').length;
+            const notAttendingCount = meeting.responses.filter(r => r.attendance === 'not-attending').length;
+            const notRespondedCount = meeting.eligibleStaff.length - meeting.responses.length;
+            
+            html += `<div style="margin-top: 15px;">
+                <p><strong>集計:</strong> 
+                参加: ${attendingCount}名 / 
+                不参加: ${notAttendingCount}名 / 
+                未回答: ${notRespondedCount}名 / 
+                合計: ${meeting.eligibleStaff.length}名</p>
+            </div>`;
+            
+            // 未回答者リスト
+            if (notRespondedCount > 0) {
+                html += '<div style="margin-top: 15px;">';
+                html += '<h4>未回答者リスト:</h4>';
+                html += '<ul>';
+                
+                meeting.eligibleStaff.forEach(staff => {
+                    if (!meeting.responses.some(r => r.name === staff)) {
+                        html += `<li>${staff}</li>`;
+                    }
+                });
+                
+                html += '</ul></div>';
+            }
+            
+            container.innerHTML = html;
+        }
+
+        // 回答編集フォームを表示する関数
+        function showEditResponseForm(staffName) {
+            const meeting = meetings.find(m => m.id === currentMeetingId);
+            if (!meeting) return;
+            
+            const response = meeting.responses.find(r => r.name === staffName);
+            if (!response) return;
+            
+            // 編集フォームに現在の値を設定
+            document.getElementById('edit-staff-name').value = staffName;
+            
+            const attendingRadio = document.querySelector('input[name="edit-attendance"][value="attending"]');
+            const notAttendingRadio = document.querySelector('input[name="edit-attendance"][value="not-attending"]');
+            
+            if (response.attendance === 'attending') {
+                attendingRadio.checked = true;
+            } else {
+                notAttendingRadio.checked = true;
+            }
+            
+            document.getElementById('edit-comment').value = response.comment || '';
+            
+            // モーダルを表示
+            document.getElementById('edit-response-modal').style.display = 'block';
+        }
+
+        // 回答を更新する関数
+        async function updateResponse() {
+            const meeting = meetings.find(m => m.id === currentMeetingId);
+            if (!meeting) return;
+            
+            const staffName = document.getElementById('edit-staff-name').value;
+            const attendance = document.querySelector('input[name="edit-attendance"]:checked').value;
+            const comment = document.getElementById('edit-comment').value;
+            
+            const responseIndex = meeting.responses.findIndex(r => r.name === staffName);
+            if (responseIndex === -1) return;
+            
+            // 回答を更新
+            meeting.responses[responseIndex].attendance = attendance;
+            meeting.responses[responseIndex].comment = comment;
+            meeting.responses[responseIndex].timestamp = new Date().toISOString();
+            
+            if (await saveDataToServer()) {
+                displayResponses(meeting);
+                
+                // モーダルを閉じる
+                document.getElementById('edit-response-modal').style.display = 'none';
+                
+                alert('回答が更新されました！');
+            }
+        }
+
+        // 説明会確定パスワード確認
+        function showFixMeetingPrompt(id) {
+            const meeting = meetings.find(m => m.id === id);
+            if (!meeting) return;
+            
+            const password = prompt(`説明会「${meeting.title}」を確定するには管理用パスワードを入力してください:`);
+            
+            if (password === meeting.password || password === masterPassword) {
+                fixMeeting(id);
+            } else if (password !== null) {
+                alert('パスワードが正しくありません。');
+            }
+        }
+
+        // 説明会を確定する関数
+        async function fixMeeting(id) {
+            const meeting = meetings.find(m => m.id === id);
+            if (!meeting) return;
+            
+            meeting.fixed = true;
+            
+            if (await saveDataToServer()) {
+                displayMeetings();
+                
+                if (currentMeetingId === id) {
+                    viewMeeting(id); // 表示を更新
+                }
+                
+                alert(`説明会「${meeting.title}」を確定しました。`);
+            }
+        }
+
+        // 日時のフォーマット関数
+        function formatDateTime(dateTimeStr) {
+            const date = new Date(dateTimeStr);
+            return date.toLocaleString('ja-JP', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    </script>
+</body>
+</html>
